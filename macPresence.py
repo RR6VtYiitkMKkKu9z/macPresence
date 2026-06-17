@@ -159,7 +159,7 @@ def is_trusted_network():
 
 
 
-def wait_for_network(timeout: int = 5) -> bool:
+def wait_for_network(timeout: int = 30) -> bool:
     """
     After wake, poll until the network is ready (trusted network detected)
     or timeout is reached. Returns True if network came up, False if timed out.
@@ -201,14 +201,17 @@ class SleepWakeListener(NSObject):
         log.info("System going to sleep → Unoccupied")
         self._callback(occupied=False)
 
-def handleWake_(self, notification):
-    log.info("System woke up — waiting for network before updating HomeKit")
-    def deferred_wake():
+    def handleWake_(self, notification):
+        log.info("System woke up — waiting for network before updating HomeKit")
+        # Spawn a background thread so we don't block the NSRunLoop
+        # while polling for network readiness
+        threading.Thread(target=self._deferred_wake, daemon=True).start()
+
+    def _deferred_wake(self):
         if wait_for_network(timeout=5):
             self._callback(occupied=True)
         else:
             log.info("Woke up but not on trusted network — skipping HomeKit update")
-    threading.Thread(target=deferred_wake, daemon=True).start()
 
 
 # ── HomeKit Accessory ─────────────────────────────────────────────────────────
@@ -237,7 +240,7 @@ class MacPresence(Accessory):
 
 # ── HAP driver loop ───────────────────────────────────────────────────────────
 
-RESTART_DELAY_SECONDS = 8
+RESTART_DELAY_SECONDS = 5
 
 def run_hap_driver(persist_path: str, get_accessory, restart_event: threading.Event):
     """

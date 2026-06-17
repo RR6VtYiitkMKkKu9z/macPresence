@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 MacPresence — expose your Mac's sleep/wake state as a HomeKit Occupancy Sensor.
-https://github.com/RR6VtYiitkMKkKu9z/macPresence
+https://github.com/RR6VtYiitkMKkKu9z/MacPresence
 
 The sensor reports "Occupancy Detected" when the Mac is awake,
 and "Occupancy Not Detected" when the Mac goes to sleep.
@@ -158,6 +158,23 @@ def is_trusted_network():
     return False, f"Wi-Fi '{ssid}' is not the home network"
 
 
+
+def wait_for_network(timeout: int = 5) -> bool:
+    """
+    After wake, poll until the network is ready (trusted network detected)
+    or timeout is reached. Returns True if network came up, False if timed out.
+    """
+    log.info("Waiting for network to be ready after wake…")
+    for _ in range(timeout):
+        trusted, reason = is_trusted_network()
+        if trusted:
+            log.info("Network ready (%s)", reason)
+            return True
+        time.sleep(1)
+    log.warning("Network did not become ready within %ds after wake", timeout)
+    return False
+
+
 # ── Sleep/Wake listener (runs on the macOS main thread via NSRunLoop) ─────────
 
 class SleepWakeListener(NSObject):
@@ -184,9 +201,14 @@ class SleepWakeListener(NSObject):
         log.info("System going to sleep → Unoccupied")
         self._callback(occupied=False)
 
-    def handleWake_(self, notification):
-        log.info("System woke up → Occupied")
-        self._callback(occupied=True)
+def handleWake_(self, notification):
+    log.info("System woke up — waiting for network before updating HomeKit")
+    def deferred_wake():
+        if wait_for_network(timeout=5):
+            self._callback(occupied=True)
+        else:
+            log.info("Woke up but not on trusted network — skipping HomeKit update")
+    threading.Thread(target=deferred_wake, daemon=True).start()
 
 
 # ── HomeKit Accessory ─────────────────────────────────────────────────────────
@@ -215,7 +237,7 @@ class MacPresence(Accessory):
 
 # ── HAP driver loop ───────────────────────────────────────────────────────────
 
-RESTART_DELAY_SECONDS = 5
+RESTART_DELAY_SECONDS = 8
 
 def run_hap_driver(persist_path: str, get_accessory, restart_event: threading.Event):
     """
